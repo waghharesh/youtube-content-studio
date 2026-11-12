@@ -26,9 +26,7 @@ if (Path(__file__).parent / "config.env").exists():
 MODEL_CANDIDATES = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-flash-latest",
-    "gemini-1.5-flash-latest",
-    "gemini-1.5-flash",
+    "gemini-flash-latest"
 ]
 
 SYSTEM_PROMPT = """
