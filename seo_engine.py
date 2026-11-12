@@ -23,7 +23,13 @@ _safe_load_dotenv()
 if (Path(__file__).parent / "config.env").exists():
     _orig_load_dotenv(dotenv_path=str(Path(__file__).parent / "config.env"))
 
-MODEL_NAME = "gemini-1.5-flash"
+MODEL_CANDIDATES = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-flash-latest",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
+]
 
 SYSTEM_PROMPT = """
 You are an expert YouTube growth strategist and scriptwriter specializing in high-retention 1.5 to 2-minute vertical videos (1080x1920).
@@ -41,7 +47,7 @@ Given a topic, return a strictly valid JSON object with the following structure:
     "mid_tier": ["moderately competitive keyword 1", "keyword 2", "keyword 3", "keyword 4"],
     "broad": ["broad category tag 1", "broad tag 2", "broad tag 3"]
   },
-  "tags": ["flattened list combining all long_tail, mid_tier, and broad tags"],
+  "tags": ["flattened list combining all long_tail, mid-tier, and broad tags"],
   "script": "Engaging spoken voiceover script of approximately 230 words (1.5 to 2 minutes at natural speaking pace). Do NOT include stage directions, speaker labels, or timestamps—only the exact words to be spoken.",
   "pexels_queries": [
     "vertical cinematic search query 1",
@@ -64,17 +70,27 @@ def configure_gemini() -> None:
     genai.configure(api_key=api_key)
 
 
+def _get_working_model_names() -> List[str]:
+    """Return candidate model names, appending any available models from ListModels."""
+    candidates = list(MODEL_CANDIDATES)
+    try:
+        for m in genai.list_models():
+            methods = getattr(m, "supported_generation_methods", []) or []
+            if "generateContent" in methods:
+                name = m.name.replace("models/", "")
+                if name not in candidates:
+                    candidates.append(name)
+    except Exception:
+        pass
+    return candidates
+
+
 def generate_seo_and_script(topic: str) -> Dict[str, Any]:
     """
-    Call Gemini 1.5 Flash in JSON mode to generate SEO titles, 3-tier tags,
-    a ~230-word spoken script, and Pexels search queries for a given topic.
+    Call Gemini Flash in JSON mode to generate SEO titles, 3-tier tags,
+    a ~230-word spoken script, and stock video search queries for a given topic.
     """
     configure_gemini()
-    model = genai.GenerativeModel(
-        model_name=MODEL_NAME,
-        system_instruction=SYSTEM_PROMPT,
-        generation_config={"response_mime_type": "application/json", "temperature": 0.7},
-    )
 
     user_prompt = (
         f"Topic: {topic}\n\n"
@@ -82,8 +98,32 @@ def generate_seo_and_script(topic: str) -> Dict[str, Any]:
         "a ~230-word high-retention spoken script (for a 1.5-2 minute video), and 6 Pexels stock video search queries."
     )
 
-    response = model.generate_content(user_prompt)
-    payload = json.loads(response.text)
+    last_err = None
+    response = None
+    for model_name in _get_working_model_names():
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=SYSTEM_PROMPT,
+                generation_config={
+                    "response_mime_type": "application/json",
+                    "temperature": 0.7,
+                },
+            )
+            response = model.generate_content(user_prompt)
+            print(f"[SEO Engine] Generated content using model: {model_name}")
+            break
+        except Exception as err:
+            last_err = err
+            continue
+
+    if response is None:
+        raise RuntimeError(f"All Gemini models failed. Last error: {last_err}")
+
+    text = response.text.strip()
+    if text.startswith("```"):
+        text = text.strip("`").removeprefix("json").strip()
+    payload = json.loads(text)
     return _normalize_seo_payload(payload, topic)
 
 
